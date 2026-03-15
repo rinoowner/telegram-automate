@@ -286,6 +286,7 @@ async def handle_new_message(client: Client, message: Message):
         return
 
     print(f"New message from {username} ({user_id}): {text}")
+    print(f"DEBUG: Logging user {user_id}...")
     log_user(user_id, username)
 
     # --- OWNER ACTIVE CHECK ---
@@ -304,9 +305,9 @@ async def handle_new_message(client: Client, message: Message):
             return
 
     if owner_online:
-        print(f"Owner is ONLINE. Waiting 5 mins before AI reply to {user_id}...")
+        print(f"DEBUG: Owner is ONLINE. Waiting 10 seconds before AI reply to {user_id}...")
         PENDING_REPLIES[user_id] = message.id
-        await asyncio.sleep(300) # Wait 5 minutes
+        await asyncio.sleep(10) # Reduced from 300 for debugging
         
         # Check if another message from owner appeared, or if user sent more (we only care about the last one)
         if PENDING_REPLIES.get(user_id) != message.id:
@@ -334,7 +335,9 @@ async def handle_new_message(client: Client, message: Message):
             if str(channel_id_or_link).startswith("-100"):
                 channel_id_or_link = int(channel_id_or_link)
 
+            print(f"DEBUG: Checking channel membership for {user_id} in {channel_id_or_link}...")
             member = await app.get_chat_member(chat_id=channel_id_or_link, user_id=user_id)
+            print(f"DEBUG: Member status: {member.status}")
             if member.status in [enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED]:
                 raise ValueError("Not joined")
                 
@@ -361,8 +364,9 @@ async def handle_new_message(client: Client, message: Message):
     # Show typing status
     # Pyrogram equivalent for typing action
     await client.send_chat_action(chat_id=user_id, action=enums.ChatAction.TYPING)
-    update_history(user_id, "user", text)
+    print(f"DEBUG: Getting AI reply for {user_id}...")
     ai_reply = await get_ai_reply(user_id)
+    print(f"DEBUG: AI Reply: {ai_reply[:50]}...")
     
     # Check if AI attempted to grant a trial
     if "[GRANT_TRIAL]" in ai_reply:
@@ -542,6 +546,7 @@ async def background_jobs():
         except: pass
 
 async def main():
+    print("DEBUG: Starting bot main() function...")
     await app.start()
     print("Rino Mods Bot is starting via polling...")
     
