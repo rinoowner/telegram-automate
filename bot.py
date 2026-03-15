@@ -2,13 +2,6 @@ import os
 import asyncio
 import datetime
 
-# --- CRITICAL FIX FOR PYTHON 3.12+ / 3.14 ---
-# Explicitly initialize event loop before any other imports
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
 from dotenv import load_dotenv
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message, MessageEntity
@@ -547,7 +540,6 @@ async def background_jobs():
 
 async def main():
     print("DEBUG: Starting bot main() function...")
-    await app.start()
     print("Rino Mods Bot is starting via polling...")
     
     # Ensure the bot account itself is in the channel
@@ -570,7 +562,6 @@ async def main():
     
     from pyrogram import idle
     await idle()
-    await app.stop()
 
 if __name__ == "__main__":
     import logging
@@ -588,4 +579,4 @@ if __name__ == "__main__":
             raise e
     pyrogram.utils.get_peer_type = safe_get_peer_type
 
-    asyncio.run(main())
+    app.run(main())
