@@ -1,5 +1,12 @@
 import os
 import asyncio
+
+# FIX: Initialize event loop before importing Pyrogram to avoid RuntimeError on Python 3.12+
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 import datetime
 import logging
 
