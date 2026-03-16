@@ -1,7 +1,11 @@
-import os
-import datetime
-from dotenv import load_dotenv
-from supabase import create_client, Client
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("database")
 
 load_dotenv()
 
@@ -12,7 +16,13 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = None
 
 if SUPABASE_URL and SUPABASE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        logger.info("Supabase client initialized successfully.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Supabase client: {e}")
+else:
+    logger.warning("SUPABASE_URL or SUPABASE_KEY is missing from .env!")
 
 def init_db():
     """
@@ -42,41 +52,47 @@ def init_db():
     );
     """
     if not supabase:
-        print("WARNING: SUPABASE_URL or SUPABASE_KEY is missing from .env!")
-        print("Database will fail to connect.")
+        logger.error("SUPABASE_URL or SUPABASE_KEY is missing! Database operations will fail.")
 
 def log_user(user_id, username):
     if not supabase: return
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
-    # Check if user exists
-    response = supabase.table('users').select('user_id').eq('user_id', user_id).execute()
-    
-    if not response.data:
-        # Insert new user
-        supabase.table('users').insert({
-            'user_id': user_id,
-            'username': username,
-            'trial_given': False,
-            'first_contact': now,
-            'last_contact': now,
-            'lead_status': 'NEW',
-            'last_followup': now
-        }).execute()
-    else:
-        # Update existing user
-        supabase.table('users').update({
-            'last_contact': now
-        }).eq('user_id', user_id).execute()
+    try:
+        # Check if user exists
+        response = supabase.table('users').select('user_id').eq('user_id', user_id).execute()
+        
+        if not response.data:
+            # Insert new user
+            supabase.table('users').insert({
+                'user_id': user_id,
+                'username': username,
+                'trial_given': False,
+                'first_contact': now,
+                'last_contact': now,
+                'lead_status': 'NEW',
+                'last_followup': now
+            }).execute()
+            logger.info(f"New user logged: {username} ({user_id})")
+        else:
+            # Update existing user
+            supabase.table('users').update({
+                'last_contact': now
+            }).eq('user_id', user_id).execute()
+            logger.info(f"Existing user updated: {username} ({user_id})")
+    except Exception as e:
+        logger.error(f"Error logging user {user_id}: {e}")
 
 def update_lead_status(user_id, status):
     if not supabase: return
     supabase.table('users').update({'lead_status': status}).eq('user_id', user_id).execute()
 
-def update_last_followup(user_id):
-    if not supabase: return
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    supabase.table('users').update({'last_followup': now}).eq('user_id', user_id).execute()
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        supabase.table('users').update({'last_followup': now}).eq('user_id', user_id).execute()
+        logger.info(f"Updated last followup for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error updating followup for {user_id}: {e}")
 
 def get_users_for_followup(hours_threshold=24):
     if not supabase: return []
@@ -135,32 +151,37 @@ def get_available_trial_key(user_id):
     if not supabase: return "NO_KEYS_AVAILABLE"
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
-    # Check if they already have one
-    user_resp = supabase.table('users').select('trial_given').eq('user_id', user_id).execute()
-    if user_resp.data and user_resp.data[0].get('trial_given'):
-        return "ALREADY_GIVEN"
+    try:
+        # Check if they already have one
+        user_resp = supabase.table('users').select('trial_given').eq('user_id', user_id).execute()
+        if user_resp.data and user_resp.data[0].get('trial_given'):
+            return "ALREADY_GIVEN"
+            
+        # Find unused key
+        keys_resp = supabase.table('trial_keys').select('*').eq('is_used', False).limit(1).execute()
+        if not keys_resp.data:
+            return "NO_KEYS_AVAILABLE"
+            
+        key_row = keys_resp.data[0]
+        key_val = key_row['key_value']
         
-    # Find unused key
-    keys_resp = supabase.table('trial_keys').select('*').eq('is_used', False).limit(1).execute()
-    if not keys_resp.data:
+        # Mark as used in trial_keys
+        supabase.table('trial_keys').update({
+            'is_used': True,
+            'used_by': user_id,
+            'used_at': now
+        }).eq('key_value', key_val).execute()
+        
+        # Mark user as having received a trial
+        supabase.table('users').update({
+            'trial_given': True
+        }).eq('user_id', user_id).execute()
+        
+        logger.info(f"Trial key {key_val} granted to {user_id}")
+        return key_val
+    except Exception as e:
+        logger.error(f"Error granting trial key to {user_id}: {e}")
         return "NO_KEYS_AVAILABLE"
-        
-    key_row = keys_resp.data[0]
-    key_val = key_row['key_value']
-    
-    # Mark as used in trial_keys
-    supabase.table('trial_keys').update({
-        'is_used': True,
-        'used_by': user_id,
-        'used_at': now
-    }).eq('key_value', key_val).execute()
-    
-    # Mark user as having received a trial
-    supabase.table('users').update({
-        'trial_given': True
-    }).eq('user_id', user_id).execute()
-    
-    return key_val
 
 def add_trial_keys(keys_list):
     if not supabase: return 0

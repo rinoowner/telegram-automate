@@ -1,6 +1,7 @@
 import os
 import asyncio
 import datetime
+import logging
 
 from dotenv import load_dotenv
 from pyrogram import Client, filters, enums
@@ -10,6 +11,13 @@ from openai import AsyncOpenAI
 from fastapi import FastAPI, Request
 import uvicorn
 from database import init_db, log_user, get_available_trial_key, add_trial_keys, update_lead_status, update_last_followup, get_users_for_followup, get_users_for_trial_followup, mark_trial_followup_sent
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("bot")
 
 # Load environment variables
 load_dotenv(override=True)
@@ -25,11 +33,11 @@ if OWNER_ID:
 
 # Ensure required config exists
 if not API_ID or not API_HASH:
-    print("Please set API_ID and API_HASH in your .env file.")
+    logger.critical("API_ID or API_HASH missing from environment! Bot cannot start.")
     exit(1)
 
 if not OPENAI_API_KEY:
-    print("Please set OPENAI_API_KEY in your .env file.")
+    logger.critical("OPENAI_API_KEY missing from environment! AI will not work.")
     exit(1)
 
 # Initialize database
@@ -140,10 +148,10 @@ async def learn_from_owner(owner_text):
         if rule and rule != "IGNORE" and not rule.upper().startswith("IGNORE"):
             with open("learned_knowledge.txt", "a", encoding="utf-8") as f:
                 f.write(f"- {rule}\n")
-            print(f"Learned new rule: {rule}")
+            logger.info(f"Learned new rule from owner interaction: {rule}")
             load_system_prompt()
     except Exception as e:
-        print(f"Failed to learn: {e}")
+        logger.error(f"Failed to learn from owner message: {e}")
 
 def update_history(user_id, role, content):
     if user_id not in user_histories:
@@ -168,7 +176,7 @@ async def get_ai_reply(user_id):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"Error calling AI API: {e}")
+        logger.error(f"Detailed OpenAI Error: {e}")
         return "I am currently having some issues connecting to my database. Let me help you shortly."
 
 @app.on_chat_member_updated()
@@ -201,9 +209,9 @@ async def handle_member_update(client: Client, update):
             )
             try:
                 await render_and_send(user_id, retention_text)
-                print(f"Sent retention DM to {user_id}")
+                logger.info(f"Sent retention DM to user {user_id} who left the channel.")
             except Exception as e:
-                print(f"Failed to send retention DM: {e}")
+                logger.warning(f"Failed to send retention DM to {user_id}: {e}")
 
 @app.on_message(filters.private & ~filters.me)
 async def handle_new_message(client: Client, message: Message):
@@ -298,9 +306,9 @@ async def handle_new_message(client: Client, message: Message):
             return
 
     if owner_online:
-        print(f"DEBUG: Owner is ONLINE. Waiting 10 seconds before AI reply to {user_id}...")
+        logger.info(f"Owner is ONLINE. Waiting 10s before AI reply to {user_id} to allow manual response...")
         PENDING_REPLIES[user_id] = message.id
-        await asyncio.sleep(10) # Reduced from 300 for debugging
+        await asyncio.sleep(10) 
         
         # Check if another message from owner appeared, or if user sent more (we only care about the last one)
         if PENDING_REPLIES.get(user_id) != message.id:
@@ -384,6 +392,7 @@ async def handle_new_message(client: Client, message: Message):
                 "Setup karke game enjoy karo! 🎮"
             )
             ai_reply = ai_reply.replace("[GRANT_TRIAL]", instruction)
+            logger.info(f"Success: Trial key injected for user {user_id}")
 
     # Extract status tag
     status_tag = None
@@ -400,7 +409,11 @@ async def handle_new_message(client: Client, message: Message):
 
     bot_sent_messages.add(ai_reply.strip())
     update_history(user_id, "assistant", ai_reply)
-    await message.reply_text(ai_reply)
+    try:
+        await message.reply_text(ai_reply)
+        logger.info(f"AI replied to {user_id} ({username})")
+    except Exception as e:
+        logger.error(f"Failed to send message to {user_id}: {e}")
 
 @app.on_message(filters.me & filters.private)
 async def handle_outgoing_message(client: Client, message: Message):
@@ -526,11 +539,11 @@ async def background_jobs():
                 try:
                     await render_and_send(user_id, followup_text)
                     mark_trial_followup_sent(user_id)
-                    print(f"Sent 5h trial followup to {user_id}")
+                    logger.info(f"Sent 5h trial followup to {user_id}")
                 except Exception as e:
-                    print(f"Failed trial followup to {user_id}: {e}")
+                    logger.warning(f"Failed trial followup to {user_id}: {e}")
         except Exception as e:
-            print(f"Background trial job error: {e}")
+            logger.error(f"Background trial job processing error: {e}")
 
         # Standard CRM followups (24h+)
         try:
@@ -575,8 +588,10 @@ if __name__ == "__main__":
             return original_get_peer_type(peer_id)
         except ValueError as e:
             if "Peer id invalid" in str(e):
+                logger.debug(f"Handling Peer ID Invalid for {peer_id}")
                 return "channel" 
             raise e
     pyrogram.utils.get_peer_type = safe_get_peer_type
 
+    logger.info("Bot is starting...")
     app.run(main())
